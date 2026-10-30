@@ -71,7 +71,13 @@
       <button id="connect" class="primary">Connect wallet</button>
     </div>
   </header>
-  <p class="sub">Your to-do list, saved on the Sepolia test network. Each change is a transaction you confirm in your wallet.</p>
+  <p class="sub" id="networkDesc">Your personal to-do list on the Sepolia test network. Transactions are confirmed in SepoliaETH.</p>
+
+  <div id="deployBox" class="hidden" style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:20px;text-align:center;">
+    <h3 style="margin-top:0;margin-bottom:8px;">Deploy to Sepolia Testnet</h3>
+    <p class="sub" style="margin-bottom:18px;">Deploy your personal To-Do contract to Sepolia testnet using your SepoliaETH.</p>
+    <button id="deployBtn" class="primary" style="padding:10px 20px;font-weight:600;">Deploy Contract (Sign with MetaMask)</button>
+  </div>
 
   <form id="addForm" class="hidden">
     <input id="newTask" type="text" maxlength="280" placeholder="What needs doing?" aria-label="New task" required />
@@ -102,29 +108,69 @@ function friendlyError(e) {
   return e.shortMessage || e.message || "Something went wrong.";
 }
 
+async function switchOrAddSepolia() {
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xaa36a7" }],
+    });
+  } catch (err) {
+    if (err.code === 4902 || err.data?.originalError?.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: "0xaa36a7",
+          chainName: "Sepolia",
+          rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+          nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
+          blockExplorerUrls: ["https://sepolia.etherscan.io"],
+        }],
+      });
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function connect() {
-  if (!cfg.address) return setStatus("Contract not deployed yet. Run the deploy script first.", true);
   if (!window.ethereum) return setStatus("No wallet found. Install MetaMask, then reload this page.", true);
   try {
     provider = new ethers.BrowserProvider(window.ethereum);
     await provider.send("eth_requestAccounts", []);
     const net = await provider.getNetwork();
-    if (Number(net.chainId) !== cfg.chainId) {
+    const chainId = Number(net.chainId);
+
+    if (chainId !== 11155111 && chainId !== 31337) {
+      setStatus("Requesting switch to Sepolia testnet in MetaMask…");
       try {
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x" + cfg.chainId.toString(16) }],
-        });
-        provider = new ethers.BrowserProvider(window.ethereum);
-      } catch {
-        return setStatus("Switch your wallet to the Sepolia test network, then connect again.", true);
+        await switchOrAddSepolia();
+        return;
+      } catch (e) {
+        return setStatus("Please approve switching to Sepolia in MetaMask, then click connect.", true);
       }
     }
+
     signer = await provider.getSigner();
     account = await signer.getAddress();
-    contract = new ethers.Contract(cfg.address, cfg.abi, signer);
     $("wallet").textContent = account.slice(0, 6) + "…" + account.slice(-4);
     $("connect").classList.add("hidden");
+
+    let activeAddress;
+    if (chainId === 11155111) {
+      $("networkDesc").textContent = "Connected to Sepolia Testnet. Transactions are confirmed in SepoliaETH.";
+      activeAddress = localStorage.getItem("TODO_CONTRACT_SEPOLIA") || cfg.sepoliaAddress;
+      if (!activeAddress) {
+        $("deployBox").classList.remove("hidden");
+        setStatus("Connected to Sepolia! Click 'Deploy Contract' above to deploy your To-Do contract using SepoliaETH.");
+        return;
+      }
+    } else {
+      $("networkDesc").textContent = "Connected to Local Hardhat Blockchain (Chain ID 31337).";
+      activeAddress = cfg.localAddress || "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+    }
+
+    contract = new ethers.Contract(activeAddress, cfg.abi, signer);
+    $("deployBox").classList.add("hidden");
     $("addForm").classList.remove("hidden");
     $("list").classList.remove("hidden");
     setStatus("");
@@ -133,6 +179,28 @@ async function connect() {
     setStatus(friendlyError(e), true);
   }
 }
+
+$("deployBtn").onclick = async () => {
+  try {
+    setStatus("Confirm the contract deployment in MetaMask…");
+    $("deployBtn").disabled = true;
+    const factory = new ethers.ContractFactory(cfg.abi, cfg.bytecode, signer);
+    const deployed = await factory.deploy();
+    setStatus("Deploying to Sepolia… Waiting for network confirmation (usually 10–15 seconds).");
+    await deployed.waitForDeployment();
+    const addr = await deployed.getAddress();
+    localStorage.setItem("TODO_CONTRACT_SEPOLIA", addr);
+    contract = new ethers.Contract(addr, cfg.abi, signer);
+    $("deployBox").classList.add("hidden");
+    $("addForm").classList.remove("hidden");
+    $("list").classList.remove("hidden");
+    setStatus("Contract deployed successfully to Sepolia at " + addr);
+    await load();
+  } catch (err) {
+    $("deployBtn").disabled = false;
+    setStatus(friendlyError(err), true);
+  }
+};
 
 async function load() {
   const tasks = await contract.getTasks(account);
