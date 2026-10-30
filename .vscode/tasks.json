@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Compile Smart Contracts",
+      "type": "shell",
+      "command": "npm run compile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Contract Tests",
+      "type": "shell",
+      "command": "npm test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Local Blockchain Node",
+      "type": "shell",
+      "command": "npm run node",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy to Local Node",
+      "type": "shell",
+      "command": "npm run deploy:local",
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy to Sepolia Testnet",
+      "type": "shell",
+      "command": "npm run deploy:sepolia",
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Frontend Web Server",
+      "type": "shell",
+      "command": "npm run serve",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

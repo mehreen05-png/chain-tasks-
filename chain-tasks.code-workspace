@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "name": "Chain Tasks (blockchain-todo)",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "editor.tabSize": 2,
+    "files.associations": {
+      "*.sol": "solidity"
+    }
+  }
+}

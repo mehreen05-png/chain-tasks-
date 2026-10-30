@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chain Tasks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #e9eef5;
+    --panel: #ffffff;
+    --ink: #13203a;
+    --muted: #6b7690;
+    --line: #d5dce8;
+    --accent: #2646d9;
+    --accent-ink: #ffffff;
+    --done: #8f99ae;
+    --danger: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Inter", system-ui, sans-serif; line-height: 1.5;
+  }
+  main { max-width: 620px; margin: 0 auto; padding: 40px 20px 80px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 {
+    font-family: "Bricolage Grotesque", system-ui, sans-serif;
+    font-size: 2.4rem; margin: 0; letter-spacing: -0.02em;
+  }
+  .sub { color: var(--muted); margin: 6px 0 28px; max-width: 46ch; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); padding: 8px 14px;
+  }
+  button:hover { border-color: var(--ink); }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.primary:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .wallet { font-size: .9rem; color: var(--muted); }
+  form { display: flex; gap: 8px; margin-bottom: 20px; }
+  input[type=text] {
+    flex: 1; font: inherit; padding: 11px 14px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  }
+  ul { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  li { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: 0; }
+  li input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; flex: none; }
+  .text { flex: 1; word-break: break-word; }
+  li.done .text { text-decoration: line-through; color: var(--done); }
+  .actions { display: flex; gap: 6px; }
+  .actions button { padding: 4px 10px; font-size: .85rem; }
+  .actions .del { color: var(--danger); }
+  .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+  #status { min-height: 1.5em; margin-top: 16px; font-size: .92rem; color: var(--muted); }
+  #status.error { color: var(--danger); }
+  .hidden { display: none; }
+  @media (prefers-reduced-motion: no-preference) { button { transition: border-color .15s, filter .15s; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Chain Tasks</h1>
+    <div>
+      <span id="wallet" class="wallet"></span>
+      <button id="connect" class="primary">Connect wallet</button>
+    </div>
+  </header>
+  <p class="sub">Your to-do list, saved on the Sepolia test network. Each change is a transaction you confirm in your wallet.</p>
+
+  <form id="addForm" class="hidden">
+    <input id="newTask" type="text" maxlength="280" placeholder="What needs doing?" aria-label="New task" required />
+    <button class="primary" type="submit">Add task</button>
+  </form>
+
+  <ul id="list" class="hidden"></ul>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script src="config.js"></script>
+<script>
+const cfg = window.TODO_CONFIG;
+const $ = (id) => document.getElementById(id);
+let provider, signer, contract, account;
+
+function setStatus(msg, isError = false) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = isError ? "error" : "";
+}
+
+function friendlyError(e) {
+  if (e.code === "ACTION_REJECTED") return "You cancelled the transaction in your wallet.";
+  if (e.revert && e.revert.name === "EmptyContent") return "Task text can't be empty.";
+  if (e.revert && e.revert.name === "ContentTooLong") return "Task text must be 280 characters or fewer.";
+  return e.shortMessage || e.message || "Something went wrong.";
+}
+
+async function connect() {
+  if (!cfg.address) return setStatus("Contract not deployed yet. Run the deploy script first.", true);
+  if (!window.ethereum) return setStatus("No wallet found. Install MetaMask, then reload this page.", true);
+  try {
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    const net = await provider.getNetwork();
+    if (Number(net.chainId) !== cfg.chainId) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x" + cfg.chainId.toString(16) }],
+        });
+        provider = new ethers.BrowserProvider(window.ethereum);
+      } catch {
+        return setStatus("Switch your wallet to the Sepolia test network, then connect again.", true);
+      }
+    }
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    contract = new ethers.Contract(cfg.address, cfg.abi, signer);
+    $("wallet").textContent = account.slice(0, 6) + "…" + account.slice(-4);
+    $("connect").classList.add("hidden");
+    $("addForm").classList.remove("hidden");
+    $("list").classList.remove("hidden");
+    setStatus("");
+    await load();
+  } catch (e) {
+    setStatus(friendlyError(e), true);
+  }
+}
+
+async function load() {
+  const tasks = await contract.getTasks(account);
+  const list = $("list");
+  list.innerHTML = "";
+  if (tasks.length === 0) {
+    list.innerHTML = '<li class="empty">No tasks yet. Add your first one above.</li>';
+    return;
+  }
+  tasks.forEach((t) => {
+    const id = Number(t.id);
+    const li = document.createElement("li");
+    if (t.completed) li.className = "done";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = t.completed;
+    cb.setAttribute("aria-label", "Mark task done");
+    cb.onchange = () => send(() => contract.toggleTask(id), "Updating task…");
+
+    const text = document.createElement("span");
+    text.className = "text";
+    text.textContent = t.content; // textContent prevents HTML injection
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const edit = document.createElement("button");
+    edit.textContent = "Edit";
+    edit.onclick = () => {
+      const next = prompt("Edit task", t.content);
+      if (next && next.trim() && next !== t.content)
+        send(() => contract.editTask(id, next.trim()), "Saving edit…");
+    };
+    const del = document.createElement("button");
+    del.textContent = "Delete";
+    del.className = "del";
+    del.onclick = () => send(() => contract.deleteTask(id), "Deleting task…");
+    actions.append(edit, del);
+
+    li.append(cb, text, actions);
+    list.appendChild(li);
+  });
+}
+
+async function send(fn, pendingMsg) {
+  try {
+    setStatus("Confirm the transaction in your wallet…");
+    const tx = await fn();
+    setStatus(pendingMsg + " Waiting for the network (usually 10–20 seconds).");
+    await tx.wait();
+    setStatus("Done.");
+    await load();
+  } catch (e) {
+    setStatus(friendlyError(e), true);
+    await load().catch(() => {});
+  }
+}
+
+$("connect").onclick = connect;
+$("addForm").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const input = $("newTask");
+  const value = input.value.trim();
+  if (!value) return;
+  input.value = "";
+  await send(() => contract.addTask(value), "Adding task…");
+};
+
+if (window.ethereum) {
+  window.ethereum.on?.("accountsChanged", () => location.reload());
+  window.ethereum.on?.("chainChanged", () => location.reload());
+}
+</script>
+</body>
+</html>
